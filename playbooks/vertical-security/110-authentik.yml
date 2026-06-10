@@ -1,0 +1,6 @@
+---
+# Placeholder playbook for Authentik deployment.
+- name: Deploy Authentik (stub)
+  hosts: central
+  roles:
+    - authentik

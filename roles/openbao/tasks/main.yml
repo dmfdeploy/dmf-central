@@ -1,0 +1,3 @@
+---
+# TODO: implement — see DMF Platform Plan Phase 0 step 5
+# Scope: OpenBao — secrets backend (KV, PKI, SSH, K8s auth, OIDC auth, AppRole). Relocate from current external deploy.

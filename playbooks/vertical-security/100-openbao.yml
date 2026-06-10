@@ -1,0 +1,8 @@
+---
+# Placeholder playbook for OpenBao relocation/promotion.
+# Note: existing OpenBao deployment is external (reachable via wg2).
+# Relocation is a separate task from the DMF Platform Plan.
+- name: Deploy OpenBao (stub)
+  hosts: central
+  roles:
+    - openbao

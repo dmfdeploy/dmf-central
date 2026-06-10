@@ -1,0 +1,9 @@
+DMF Platform — dmf-central (deploy-once central services)
+Copyright 2026 DMF Platform contributors
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes no upstream-derived components beyond standard
+Helm charts and Ansible roles for upstream services (Authentik,
+OpenBao, Zot registry, optional NetBox/Forgejo). Each upstream
+project's own LICENSE governs its respective code; charts here are
+thin wrappers.

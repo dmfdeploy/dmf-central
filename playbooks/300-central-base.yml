@@ -1,0 +1,10 @@
+---
+# Layer 3 (Container Platform) bootstrap for the central federated cluster.
+# Stub — content lands when the central cluster comes online.
+# Vertical-security artifacts (Authentik, OpenBao, registry) deploy on top.
+- name: Central cluster base (stub)
+  hosts: all
+  tasks:
+    - name: Stub — central cluster not yet deployed
+      ansible.builtin.debug:
+        msg: "Central cluster roles are stubs. See DMF EBU Mapping (2026-04-25)."

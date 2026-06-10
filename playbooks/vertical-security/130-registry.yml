@@ -1,0 +1,8 @@
+---
+# Placeholder playbook for container registry (Harbor or Zot).
+# Registry choice is deferred — both role stubs exist.
+- name: Deploy container registry (stub)
+  hosts: central
+  roles:
+    - harbor
+    - zot

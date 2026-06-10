@@ -1,0 +1,3 @@
+---
+# TODO: implement — see DMF Platform Plan Phase 0 step 5
+# Scope: Authentik — central IdP (OIDC/SAML), all clusters federate, broadcast role mapping
