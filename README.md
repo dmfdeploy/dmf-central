@@ -14,7 +14,7 @@ Deploy-once central services for the DMF Platform.
 
 ## Dependencies
 
-- `dmf-env` — environment-specific inventory
+- `dmf-env` — generic environment provisioning + bootstrap tooling
 
 ## Status
 
