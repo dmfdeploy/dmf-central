@@ -1,5 +1,7 @@
 # dmf-central
 
+[![CI](https://github.com/dmfdeploy/dmf-central/actions/workflows/ci.yml/badge.svg)](https://github.com/dmfdeploy/dmf-central/actions/workflows/ci.yml)
+
 Deploy-once central services for the DMF Platform.
 
 ## Services
