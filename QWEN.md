@@ -1,5 +1,7 @@
 # QWEN.md — dmf-central
 
+Project guidance for every agent lives in [AGENTS.md](AGENTS.md). Read it first.
+
 <!-- WORKING-MODEL-BLOCK-START — generated from umbrella docs/templates/working-model-block.md; do not edit copies, edit the template and run bin/check-working-model-sync.sh -->
 ## Working model (mandatory)
 
@@ -21,46 +23,3 @@ in the umbrella repo. The three rules that matter mid-task:
    liveness; plan frontmatter = design state; ADRs = decisions (RFC in
    Discussions first); STATUS.md = committed notes; STATUS.local.md = live repo snapshot.
 <!-- WORKING-MODEL-BLOCK-END -->
-
-## DMF Platform context — read first
-
-This repo is a component of the **DMF Platform**, an umbrella workspace
-checked out alongside this repo. Operators set `$DMFDEPLOY_UMBRELLA` to its
-local path. Cross-cutting state (status, decisions, plans, skills) lives
-there, not here.
-
-Before any non-trivial change in this repo:
-
-```bash
-cd "$DMFDEPLOY_UMBRELLA"
-git fetch && git pull
-bin/generate-status.sh --no-fetch    # refreshes STATUS.md
-```
-
-Then read in order:
-1. `dmfdeploy/STATUS.md` — what's happening across all repos right now
-2. `dmfdeploy/QWEN.md` — full boot ritual + skills index + Qwen-specific rules
-3. `dmfdeploy/docs/decisions/INDEX.md` — ADRs applicable to your task
-4. The most recent file under `dmfdeploy/docs/handoffs/`
-
-For cluster ops, secrets, or dmf-cms releases, also read §0 Secrets Discipline
-of the relevant skill in `dmfdeploy/.claude/skills/`. Qwen doesn't have
-Claude's `/skill-name` invocation — read the SKILL.md as documentation
-and apply its sections like instructions.
-
-If you change cross-repo state, update the `<!-- HUMAN-START -->` section of
-`dmfdeploy/STATUS.md` before ending the session.
-
----
-
-## Repo-specific notes
-
-This repo is **scaffold-only** per the strategic review. All `roles/*/tasks/main.yml`
-are TODO-only stubs reserving central-services slots (Authentik, OpenBao,
-Harbor/Zot, optional central NetBox/Forgejo) for Phase 0 step 5.
-
-Don't implement these without a concrete forcing function (collaborator joining,
-thesis-killer landing, or an explicit decision to start Phase 0 step 5). The
-scaffolds exist to keep the structural reservation; tidying them up is the
-wrong direction. See TODOS.md "Scaffold roles awaiting implementation" for
-context.
