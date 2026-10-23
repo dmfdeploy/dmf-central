@@ -5,7 +5,7 @@ Authentik (IdP), OpenBao (secrets), Harbor or Zot (registry), and optional
 central NetBox and Forgejo. It is a scaffold: every `roles/*/tasks/main.yml`
 is a TODO-only stub reserving a slot for Phase 0 step 5. Cross-repo context
 lives in the [dmfdeploy umbrella repo](https://github.com/dmfdeploy/dmfdeploy);
-scope is in its `docs/architecture/DMF Platform Plan.md` §7b, §7c and §8f.
+scope is in its `docs/architecture/dmfdeploy-platform-plan.md` §7b, §7c and §8f.
 
 ## Boot steps
 
