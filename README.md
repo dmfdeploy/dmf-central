@@ -6,7 +6,7 @@ Placeholder roles and playbooks for the central-site services of the dmfdeploy p
 
 Part of [dmfdeploy](https://github.com/dmfdeploy/dmfdeploy), an independent open prototype that explores the ideas of the EBU Dynamic Media Facility on commodity infrastructure. Status: scaffold, version 0.1.0, with no running code yet.
 
-This repository is public so that the central-site part of the architecture has a visible place in the project. It holds the planned layout only. Nothing here deploys a service today. For the reasoning, see the [platform plan](https://github.com/dmfdeploy/dmfdeploy/blob/main/docs/architecture/DMF%20Platform%20Plan.md).
+This repository is public so that the central-site part of the architecture has a visible place in the project. It holds the planned layout only. Nothing here deploys a service today. For the reasoning, see the [dmfdeploy platform plan](https://github.com/dmfdeploy/dmfdeploy/blob/main/docs/architecture/dmfdeploy-platform-plan.md).
 
 ## Services
 
