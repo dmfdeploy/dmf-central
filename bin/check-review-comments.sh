@@ -32,24 +32,40 @@
 #
 # The scanner for JavaScript, TypeScript, CSS, SCSS and Terraform skips the
 # places where "/*" is text, not a comment: strings, line comments, template
-# text (`...` in JavaScript, "..." and <<EOF heredocs in Terraform), regex
-# literals and JSX text. A substitution inside a template or string (${...},
-# #{...} in SCSS, %{...} in Terraform) is code and can hold a comment, so it
-# is scanned as code, nested to any depth. Whether a "/" starts a regex and a
-# "<" starts JSX depends on the token before it; where that token cannot
-# decide (after ")", "}", "of", "yield" or "await", a "<" in .js, .cjs and
-# .mjs, or a <T>( or <T extends in .tsx), the scanner follows both readings
-# and reports a comment either one finds. Where it cannot be sure, it
-# reports rather than skips:
-#   - a '...' or "..." string still open at the end of its line means the
-#     scanner lost track, so it rescans that line from the quote as code;
-#   - when its last reading breaks the syntax, or more than 64 are live, the
-#     rest of the file skips nothing;
-#   - in SCSS a // comment never hides a "/*", because // is not a comment
+# text (`...` in JavaScript, "..." and <<EOF heredocs in Terraform) and regex
+# literals. A substitution inside a template or string (${...}, #{...} in
+# SCSS, %{...} in Terraform) is code and can hold a comment, so it is scanned
+# as code, nested to any depth.
+#
+# Whether a "/" starts a regex and a "<" starts JSX depends on the token
+# before it, so the scanner sometimes guesses. Where the token cannot decide
+# (after ")", "}", "of", "yield" or "await", a "<" in .js, .cjs and .mjs, or
+# a <T>( or <T extends in .tsx), it follows both readings and reports a
+# comment either one finds. Elsewhere it takes one reading, and a wrong
+# guess must not cost a comment:
+#   - JSX is read to its grammar, and a closing tag must name the element it
+#     closes. A guessed JSX reading that breaks the grammar, or is still open
+#     at the end of the file, goes back to the "<" and rescans it as an
+#     operator.
+#   - A "/*" inside JSX text or a JSX attribute string is reported, not
+#     skipped, so a guess that closes by accident hides nothing it covered.
+#   - A regex is read only if it closes on its line. One that would hide a
+#     "/*" is checked against the division reading too.
+#   - A '...' or "..." string still open at the end of its line means the
+#     scanner lost track, so it rescans that line from the quote as code.
+#   - In SCSS, a // comment never hides a "/*", because // is not a comment
 #     inside url(...) or a custom property value.
+#   - When the last reading breaks the syntax, more than 64 are live, or the
+#     scan passes 4 steps per character of the file, the rest of the file
+#     from the earliest point still in doubt skips nothing. The step budget
+#     bounds the retries, so a file costs linear time; real code uses under
+#     half a step per character.
 # The other scanners skip nothing. So a delimiter inside a string, template
 # or JSX text can be reported, but a comment in valid code is not missed.
-# Syntax the scanner does not model is outside that promise.
+# The residual risk is a wrong guess the rules above do not catch: one that
+# closes cleanly and leaves the scanner out of step, so a later comment is
+# read from the wrong context. Syntax the scanner does not model is outside
+# that promise.
 #
 # Out of scope: ordinary string literals (log and error text are data),
 # Markdown, lockfiles and generated or minified files (see the excludes), and
@@ -215,7 +231,7 @@ self_test() {
   run_file "tsx // in JSX text" fail 'src/a.tsx,line=2' '' src/a.tsx $'const a = <a>http://x {/*'"$tail"$'}</a>;\n'
   run_file "tsx quotes in JSX text" fail 'src/a.tsx,line=2' '' src/a.tsx $'const a = <p>It\'s {/* Bob\'s'"$tail"$'}</p>;\n'
   run_file "jsx JSX text after return" fail 'src/a.jsx,line=3' '' src/a.jsx $'function A() {\n  return <a title="x">http://x {/*'"$tail"$'}</a>;\n}\n'
-  run_file "tsx /* in JSX text is text" pass 'OK \(0 allowlisted\)' '' src/a.tsx $'const a = <p>/* not a comment</p>;\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  run_file "tsx /* in JSX text (over-reports)" fail 'src/a.tsx,line=2' '' src/a.tsx $'const a = <p>/* not a comment</p>;\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
   run_file "js /* in JSX text (over-reports)" fail 'src/a.js,line=2' '' src/a.js $'const a = <p>/* not a comment</p>;\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
   run_file "tsx generic arrow is not JSX" fail 'src/a.tsx,line=2' '' src/a.tsx $'const f = <T,>(x: T) => x; /*'"$tail"
   run_file "tsx generic function type is not JSX" fail 'src/a.tsx,line=2' '' src/a.tsx $'type F = <T>(x: T) => T; /*'"$tail"
@@ -225,8 +241,35 @@ self_test() {
   run_file "ts regex after yield" fail 'src/a.ts,line=3' '' src/a.ts $'function* g() {\n  yield /\'/; /* \''"$tail"$'}\n'
   run_file "js // in JSX text" fail 'src/a.js,line=2' '' src/a.js $'const a = <a>http://x {/*'"$tail"$'}</a>;\n'
   run_file "ts division after ) keeps strings opaque" pass 'OK \(0 allowlisted\)' '' src/a.ts $'const h = (w) / 2; const a = "/*";\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  # A guess that turns out wrong must not lose a comment.
+  run_file "jsx Flow generic is not JSX" fail 'src/a.jsx,line=3' '' src/a.jsx $'const f = <T: string>(x: T): T => x;\n/*\n codex round 7\n*/\n'
+  run_file "jsx Flow generic, then JSX" fail 'src/a.jsx,line=3' '' src/a.jsx $'const f = <T: string>(x: T): T => x;\n/*'"$tail"$'const e = <p>hi</p>;\n'
+  # Not valid code: the guessed element closes by accident on the last line,
+  # so no reading fails and nothing is retried.
+  run_file "jsx guessed JSX that closes by accident" fail 'src/a.jsx,line=3' '' src/a.jsx $'const f = <T>x;\n/*'"$tail"$'const s = "</T>";\n'
+  run_file "tsx guessed JSX that closes by accident" fail 'src/a.tsx,line=3' '' src/a.tsx $'const f = <T>x;\n/*'"$tail"$'const s = "</T>";\n'
+  local strs=$'const a = "/*";\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  run_file "jsx Flow generic is rescanned as code" pass 'OK \(0 allowlisted\)' '' src/a.jsx $'const f = <T: string>(x: T): T => x;\n'"$strs"
+  # Not valid code: a closing tag for another element ends the guess, so the
+  # scan goes back to the "<" instead of reading on out of step.
+  run_file "jsx closing tag must match" pass 'OK \(0 allowlisted\)' '' src/a.jsx $'const f = <T>x;\nconst s = `</p>\n`;\n'"$strs"
+  # Not valid code: the guessed element never closes, so the scan goes back
+  # to the "<" at the end of the file.
+  run_file "jsx guess still open at the end of the file" pass 'OK \(0 allowlisted\)' '' src/a.jsx $'const f = <T>{ "/*" };\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  # Not valid code: the guess closes by accident inside a template, so the
+  # scanner reads on out of step and ends the file inside a template.
+  run_file "jsx guess that closes inside a template" fail 'src/a.jsx,line=4' '' src/a.jsx $'const f = <T>x;\nconst s = `</T>\n`; /*'"$tail"
+  run_file "js regex guess that runs to the end of the line" fail 'src/a.js,line=3' '' src/a.js $'const h = (w) / \'it\\\'s\';\n/*'"$tail"
+  run_file "js number before a slash" fail 'src/a.js,line=2' '' src/a.js $'const a = 1./2; /*'"$tail"
+  # Not valid code: every line opens a guessed element that never closes, so
+  # each guess runs far before it fails. The scan must still finish and
+  # report the comment at the end.
+  local many
+  many=$(awk 'BEGIN { for (i = 0; i < 3000; i++) print "const a = <T>x;" }')
+  run_file "jsx 3000 failing guesses stay within the step budget" fail 'src/a.jsx,line=3002' '' src/a.jsx "$many"$'\n/*'"$tail"
   run_file "ts reserved word as a property" fail 'src/a.ts,line=2' '' src/a.ts $'const h = o.return / 2; /*'"$tail"
   run_file "tf comment in a string substitution" fail 'main.tf,line=2' '' main.tf $'x = "${ /*'"$tail"$'1 }"\n'
+  run_file "tfvars comment in a string substitution" fail 'env.tfvars,line=2' '' env.tfvars $'x = "${ /*'"$tail"$'1 }"\n'
   run_file "tf quote in a comment in a substitution" fail 'main.tf,line=2' '' main.tf $'x = "${ 1 /* "'"$tail"$'}"\n'
   run_file "tf // in heredoc text" fail 'main.tf,line=3' '' main.tf $'x = <<EOF\nsee // ${ /*'"$tail"$'1 }\nEOF\n'
   run_file "tf heredoc text with /* and no marker" pass 'OK \(0 allowlisted\)' '' main.tf $'x = <<-EOF\n  src/*.tf\n  EOF\ny = "codex round 7 failed"\n'
@@ -295,8 +338,9 @@ exclude=(":(exclude)bin/check-review-comments.sh" ":(exclude)$ALLOW_FILE"
 # The C-style scanner (TypeScript, JavaScript, CSS, SCSS, Terraform) skips
 # only text that cannot hold code: strings, template text, regex literals,
 # JSX text and line comments, but never a ${...} substitution, which is code.
-# Where it cannot tell which reading is right, it follows all of them, and
-# where it loses track it reports rather than skips; the header lists how.
+# Where it cannot tell which reading is right, it follows all of them or
+# goes back when a guess fails, and where it loses track it reports rather
+# than skips; the header lists how.
 # The delimiter scanners for HTML, Jinja and Go templates do not know about
 # strings, so a delimiter inside a string there opens a comment. Both fail
 # closed: they can only report more, never less. An unterminated block runs
@@ -347,7 +391,8 @@ DELIM = {"html": [HTML, JINJA, C], "htm": [HTML, JINJA, C],
 RESERVED = frozenset("return typeof instanceof in new delete void throw "
                      "case do else".split())
 CONTEXTUAL = frozenset("of yield await".split())
-WORD = re.compile(r"[\w$#]+")
+# A number keeps its ".", so the "/" in 1./2 is division.
+WORD = re.compile(r"\d[\w$.]*|[\w$#]+")
 SPACE = re.compile(r"\s+")
 FLAGS = re.compile(r"[\w$]*")
 JSX_START = re.compile(r"[\s\w$>]")
@@ -357,9 +402,18 @@ TYPE_PARAMS = re.compile(r"\s*(?:const\s+)?[\w$]+\s*[,=]")
 TYPE_OR_JSX = re.compile(r"\s*(?:const\s+)?[\w$]+\s*(?:extends\b|>\s*\()")
 HEREDOC = re.compile(r"<<-?([A-Za-z_][\w-]*)[ \t]*\n")
 TEMPLATE_STOP = re.compile(r"[\\`$]")
-JSX_TEXT_STOP = re.compile(r"[{<]")
-# More live readings than this and the rest of the file skips nothing.
+JSX_TEXT_STOP = re.compile(r"[{</]")
+# A JSX tag name (div, a-b, svg:path, Foo.Bar) and an attribute name.
+JSX_NAME = re.compile(r"(?:[^\W\d]|\$)[\w$-]*(?::(?:[^\W\d]|\$)[\w$-]*)?"
+                      r"(?:\.(?:[^\W\d]|\$)[\w$-]*)*")
+JSX_ATTR = re.compile(r"(?:[^\W\d]|\$)[\w$-]*(?::(?:[^\W\d]|\$)[\w$-]*)?\s*(=)?")
+# More live readings than this, or more steps than STEP_BUDGET per
+# character, and the scanner stops guessing. A reading whose context stack
+# or JSX element nesting grows deeper than MAX_DEPTH ends as if it broke the
+# syntax.
 MAX_READINGS = 64
+STEP_BUDGET = 4
+MAX_DEPTH = 200
 
 
 def c_spans(text, lang):
@@ -370,7 +424,8 @@ def c_spans(text, lang):
     before a "/" or "<" cannot tell an operator from a regex or JSX start,
     both readings go forward and a comment either one finds is kept. A
     reading that breaks the syntax (a regex or JSX tag that cannot close)
-    stops; readings that reach the same state merge.
+    stops; readings that reach the same state merge. Where only a JSX
+    reading was taken, its failure resumes the operator reading it skipped.
     """
     n = len(text)
     starts = [0] + [m.end() for m in re.finditer("\n", text)]
@@ -384,11 +439,18 @@ def c_spans(text, lang):
     def line_of(pos):
         return bisect.bisect_right(starts, pos)
 
+    ends = {}
+
     def block(i):
-        j = text.find("*/", i + 2)
-        end = n if j < 0 else j + 2
-        spans.add((line_of(i), line_of(max(end - 1, i))))
-        return end
+        if i not in ends:
+            j = text.find("*/", i + 2)
+            ends[i] = n if j < 0 else j + 2
+            spans.add((line_of(i), line_of(max(ends[i] - 1, i))))
+        return ends[i]
+
+    # A guess is a JSX reading taken without following the operator reading
+    # too. alts[g] is that other reading; it is resumed if guess g fails.
+    alts, used = [], set()
 
     def regex_end(i):
         # A regex literal cannot hold a raw newline; None means i does not
@@ -448,27 +510,36 @@ def c_spans(text, lang):
         if m:
             w = m.group()
             if w in RESERVED:
-                after_dot = text[:i].rstrip().endswith(".")
+                j = i - 1
+                while j >= 0 and text[j].isspace():
+                    j -= 1
+                after_dot = j >= 0 and text[j] == "."
                 return [(m.end(), stack, "D" if after_dot else "R")]
             return [(m.end(), stack, "B" if w in CONTEXTUAL else "D")]
         if lang.get("regex") and ch == "/":
             out = []
+            guess = False
             if prev in "RB":
                 end = regex_end(i)
                 if end is not None:
                     out.append((end, stack, "D"))
-            if prev in "DB" or not out:
+                    # A regex that would hide a "/*" is checked against the
+                    # division reading too, in case the token before was
+                    # misread.
+                    guess = text.find("/*", i, end + 1) >= 0
+            if prev in "DB" or not out or guess:
                 out.append((i + 1, stack, "R"))
             return out
         if (ch == "<" and lang.get("jsx") and prev in "RB"
                 and JSX_START.match(text, i + 1)):
-            jsx_open = (i + 1, stack + (("jo", 0),), prev)
+            op = (i + 1, stack, "R")
             if (lang["jsx"] == "sure" and prev == "R"
                     and not TYPE_OR_JSX.match(text, i + 1)):
                 if TYPE_PARAMS.match(text, i + 1):
-                    return [(i + 1, stack, "R")]
-                return [jsx_open]
-            return [jsx_open, (i + 1, stack, "R")]
+                    return [op]
+                alts.append(op)
+                return [(i + 1, stack + (("jo", (), "n", "", len(alts) - 1),), prev)]
+            return [(i + 1, stack + (("jo", (), "n", "", -1),), prev), op]
         if ch == ")" or text.startswith(("++", "--"), i):
             return [(i + (1 if ch == ")" else 2), stack, "B")]
         if ch == "]":
@@ -524,43 +595,89 @@ def c_spans(text, lang):
         return [(i + 1, stack, prev)]
 
     def jsx(i, stack, prev):
-        kind, depth = stack[-1]
-        ch = text[i]
+        # Frames: ("jx", names, guess) for element children, ("jo", names,
+        # phase, name, guess) for an opening tag and ("jc", names, phase,
+        # guess) for a closing one. names lists the open elements, innermost
+        # last; a closing tag must name the innermost one. Any text that
+        # breaks the JSX grammar ends the reading.
+        top, rest, ch = stack[-1], stack[:-1], text[i]
+        kind, names, guess = top[0], top[1], top[-1]
+        if len(names) > MAX_DEPTH:
+            return []
         if kind == "jx":
-            # Element children: text, {expression}, or a nested tag.
             if ch == "{":
                 return [(i + 1, stack + (("c", 0),), "R")]
+            if text.startswith("</", i):
+                return [(i + 2, rest + (("jc", names, "n", guess),), prev)]
             if ch == "<":
-                if text.startswith("</", i):
-                    return [(i + 2, stack[:-1] + (("jc", depth),), prev)]
-                return [(i + 1, stack[:-1] + (("jo", depth),), prev)]
+                return [(i + 1, rest + (("jo", names, "n", "", guess),), prev)]
+            if text.startswith("/*", i):
+                # Literal text in real JSX, but the JSX reading may be a
+                # wrong guess, so it is reported and never skipped.
+                block(i)
             m = JSX_TEXT_STOP.search(text, i + 1)
             return [(m.start() if m else n, stack, prev)]
-        # Inside an opening ("jo") or closing ("jc") tag.
-        if ch.isspace() or ch.isalnum() or ch in "_$.:-=":
-            return [(i + 1, stack, prev)]
+        if ch.isspace():
+            return [(SPACE.match(text, i).end(), stack, prev)]
         if text.startswith("/*", i):
             return [(block(i), stack, prev)]
         if text.startswith("//", i):
             j = text.find("\n", i)
-            return [(n if j < 0 else j, stack, prev)]
-        if ch == ">":
-            if kind == "jo":
-                return [(i + 1, stack[:-1] + (("jx", depth + 1),), prev)]
-            if depth <= 1:
-                return [(i + 1, stack[:-1], "D")]
-            return [(i + 1, stack[:-1] + (("jx", depth - 1),), prev)]
-        if kind == "jo":
+            j = n if j < 0 else j
+            k = text.find("/*", i + 2, j)
+            return [(j if k < 0 else k, stack, prev)]
+
+        def close(at):
+            if len(names) == 1:
+                return [(at, rest, "D")]
+            return [(at, rest + (("jx", names[:-1], guess),), prev)]
+
+        if kind == "jc":
+            if top[2] == "n":
+                m = JSX_NAME.match(text, i)
+                if m and names and m.group() == names[-1]:
+                    return [(m.end(), rest + (("jc", names, "e", guess),), prev)]
+                if ch == ">" and names and names[-1] == "":
+                    return close(i + 1)
+            elif ch == ">":
+                return close(i + 1)
+            return []
+        phase, name = top[2], top[3]
+        if phase == "n":
+            if ch == ">":
+                return [(i + 1, rest + (("jx", names + ("",), guess),), prev)]
+            m = JSX_NAME.match(text, i)
+            if m:
+                return [(m.end(), rest + (("jo", names, "a", m.group(), guess),), prev)]
+            return []
+        attrs = rest + (("jo", names, "a", name, guess),)
+        if phase == "v":
             if ch in "\"'":
                 j = text.find(ch, i + 1)
-                return [] if j < 0 else [(j + 1, stack, prev)]
+                if j < 0:
+                    return []
+                k = text.find("/*", i + 1, j)
+                while k >= 0:
+                    # Reported for the same reason as in JSX text.
+                    block(k)
+                    k = text.find("/*", k + 2, j)
+                return [(j + 1, attrs, prev)]
             if ch == "{":
-                return [(i + 1, stack + (("c", 0),), "R")]
-            if text.startswith("/>", i):
-                if depth == 0:
-                    return [(i + 2, stack[:-1], "D")]
-                return [(i + 2, stack[:-1] + (("jx", depth),), prev)]
-        # Not a JSX tag, so this reading is wrong.
+                return [(i + 1, attrs + (("c", 0),), "R")]
+            return []
+        if ch == "{":
+            return [(i + 1, stack + (("c", 0),), "R")]
+        if ch == ">":
+            return [(i + 1, rest + (("jx", names + (name,), guess),), prev)]
+        if text.startswith("/>", i):
+            if not names:
+                return [(i + 2, rest, "D")]
+            return [(i + 2, rest + (("jx", names, guess),), prev)]
+        m = JSX_ATTR.match(text, i)
+        if m:
+            if m.group(1):
+                return [(m.end(), rest + (("jo", names, "v", name, guess),), prev)]
+            return [(m.end(), stack, prev)]
         return []
 
     steps = {"c": code, "s": string, "t": template, "h": heredoc,
@@ -584,25 +701,56 @@ def c_spans(text, lang):
                 return
             i = block(i)
 
-    while heap:
+    def retry(stack):
+        # A reading inside guess g failed, so resume the reading g skipped.
+        for frame in stack:
+            if frame[0] in ("jo", "jc", "jx") and frame[-1] >= 0:
+                if frame[-1] not in used:
+                    used.add(frame[-1])
+                    add(*alts[frame[-1]])
+
+    # A reading in step with valid code ends the file in code with every
+    # brace closed. If none does, or the scanner gives up, the rest of the
+    # file skips nothing from the earliest point that could be wrong: where a
+    # reading broke the syntax, or a guess whose other reading never ran,
+    # since a guess can close by accident and leave the scanner out of step.
+    budget = STEP_BUDGET * n + 4096
+    clean, gave_up, doubt = False, False, [n]
+    while heap and not gave_up:
         if len(heap) > MAX_READINGS:
-            # Too many readings to follow.
-            skip_nothing(heap[0][0])
+            gave_up = True
             break
         pos, stack = heapq.heappop(heap)
         prev = live.pop((pos, stack))
-        while pos < n:
-            nxt = steps[stack[-1][0]](pos, stack, prev)
-            if not nxt and not heap:
-                # The last reading broke the syntax, so the scanner has
-                # lost track of the file.
-                skip_nothing(pos)
+        while True:
+            if pos >= n:
+                if stack == (("c", 0),):
+                    clean = True
+                else:
+                    retry(stack)
+                break
+            budget -= 1
+            if budget < 0:
+                gave_up = True
+                doubt.append(pos)
+                break
+            nxt = []
+            if len(stack) <= MAX_DEPTH:
+                nxt = steps[stack[-1][0]](pos, stack, prev)
+            if not nxt:
+                retry(stack)
+                doubt.append(pos)
+                break
             if len(nxt) == 1 and not heap:
                 pos, stack, prev = nxt[0]
                 continue
-            for s in nxt:
-                add(*s)
+            for item in nxt:
+                add(*item)
             break
+    if gave_up or not clean:
+        doubt += [k[0] for k in heap]
+        doubt += [alts[g][0] for g in range(len(alts)) if g not in used]
+        skip_nothing(min(doubt))
     return sorted(spans)
 
 
