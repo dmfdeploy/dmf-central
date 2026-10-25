@@ -18,8 +18,8 @@
 #                                    follow the leader on the same line
 #   docstrings        *.py           module, class and function docstrings
 #   /* ... */         *.ts *.tsx *.js *.jsx *.cjs *.mjs *.css *.scss *.tf
-#                     *.tfvars (skips '...' and "..." strings); *.html *.htm *.svg *.vue
-#                     (skips nothing)
+#                     *.tfvars (skips strings, see below); *.html *.htm *.svg
+#                     *.vue (skips nothing)
 #   <!-- ... -->      *.html *.htm *.svg *.vue *.xml *.bpmn *.j2 *.jinja
 #   {# ... #}         *.html *.htm *.j2 *.jinja *.jinja2
 #   {{/* ... */}}     *.tpl *.tftpl *.yaml *.yml, also as {{- /* ... */ -}}
@@ -28,12 +28,28 @@
 # line from the opening delimiter to the closing one is matched on the
 # markers alone and reported as <path>:<line>; the allowlist covers it the
 # same way. These need python3 whenever a file with one of those extensions is
-# tracked, and the check fails rather than skip them. The scanners for
-# JavaScript, TypeScript, CSS and Terraform skip '...' and "..." strings,
-# which cannot hold code, but not template literals: a ${...} substitution
-# can hold a real comment, so template text is scanned like code. The other
-# scanners skip nothing. So a delimiter inside a string or template text can
-# be reported, but a comment is never missed.
+# tracked, and the check fails rather than skip them.
+#
+# The scanner for JavaScript, TypeScript, CSS, SCSS and Terraform skips the
+# places where "/*" is text, not a comment: strings, line comments, template
+# text (`...` in JavaScript, "..." and <<EOF heredocs in Terraform), regex
+# literals and JSX text. A substitution inside a template or string (${...},
+# #{...} in SCSS, %{...} in Terraform) is code and can hold a comment, so it
+# is scanned as code, nested to any depth. Whether a "/" starts a regex and a
+# "<" starts JSX depends on the token before it; where that token cannot
+# decide (after ")", "}", "of", "yield" or "await", a "<" in .js, .cjs and
+# .mjs, or a <T>( or <T extends in .tsx), the scanner follows both readings
+# and reports a comment either one finds. Where it cannot be sure, it
+# reports rather than skips:
+#   - a '...' or "..." string still open at the end of its line means the
+#     scanner lost track, so it rescans that line from the quote as code;
+#   - when its last reading breaks the syntax, or more than 64 are live, the
+#     rest of the file skips nothing;
+#   - in SCSS a // comment never hides a "/*", because // is not a comment
+#     inside url(...) or a custom property value.
+# The other scanners skip nothing. So a delimiter inside a string, template
+# or JSX text can be reported, but a comment in valid code is not missed.
+# Syntax the scanner does not model is outside that promise.
 #
 # Out of scope: ordinary string literals (log and error text are data),
 # Markdown, lockfiles and generated or minified files (see the excludes), and
@@ -176,7 +192,46 @@ self_test() {
   run_file "ts comment in a template substitution" fail 'src/a.ts,line=3' '' src/a.ts $'const s = `a ${ /*\n * Notes.\n'"$inner"$' */ x } b`;\n'
   run_file "tsx comment in a template substitution" fail 'src/a.tsx,line=3' '' src/a.tsx $'const s = `a ${ /*\n * Notes.\n'"$inner"$' */ x } b`;\n'
   run_file "ts template text with /* and no marker" pass 'OK \(0 allowlisted\)' '' src/a.ts $'const s = `glob: src/*.ts`;\nconst t = 1;\n'
-  run_file "ts template text with /* then a marker (over-reports)" fail 'src/a.ts,line=2' '' src/a.ts $'const s = `glob: src/*.ts`;\nconst t = "codex round 7 failed";\n'
+  run_file "ts template text with /* then a marker" pass 'OK \(0 allowlisted\)' '' src/a.ts $'const s = `glob: src/*.ts`;\nconst t = "codex round 7 failed";\n'
+  # Text that cannot hold a comment must not hide a real opener after it,
+  # and must not open one itself. Bodies are valid code unless marked; in a
+  # fail case the marker sits on the line after the opener, with no leader.
+  local tail=$'\n'"$inner"$'*/\n'
+  run_file "ts // in template text" fail 'src/a.ts,line=2' '' src/a.ts $'const t = `//`; /*'"$tail"
+  run_file "ts quote in template text" fail 'src/a.ts,line=2' '' src/a.ts $'const t = `it\'s`; /*'"$tail"
+  run_file "ts escaped backtick in template text" fail 'src/a.ts,line=2' '' src/a.ts $'const t = `a \\` // b`; /*'"$tail"
+  run_file "ts multi-line template keeps line numbers" fail 'src/a.ts,line=3' '' src/a.ts $'const t = `one\ntwo //`; /*'"$tail"
+  run_file "ts nested template in a substitution" fail 'src/a.ts,line=2' '' src/a.ts $'const t = `a ${ `b // ${ c }` } //`; /*'"$tail"
+  run_file "ts object braces in a substitution" fail 'src/a.ts,line=2' '' src/a.ts $'const t = `${ {a: 1} /*'"$tail"$'.a }`;\n'
+  run_file "ts quote in a regex" fail 'src/a.ts,line=2' '' src/a.ts $'const r = /\'/; /*'"$tail"
+  run_file "ts escaped slash in a regex" fail 'src/a.ts,line=2' '' src/a.ts $'const r = /a\\//; /*'"$tail"
+  run_file "ts quotes in a regex class" fail 'src/a.ts,line=2' '' src/a.ts $'const r = /["\']/g; /*'"$tail"
+  run_file "ts slash in a regex class" fail 'src/a.ts,line=2' '' src/a.ts $'const r = /[/]\'/; /*\''"$tail"
+  # Not valid code: the line shows what happens once the scanner loses track.
+  run_file "unclosed string does not hide a /*" fail 'src/a.ts,line=2' '' src/a.ts $'const a = \'oops; /*'"$tail"
+  run_file "ts regex after ) pairs a quote" fail 'src/a.ts,line=2' '' src/a.ts $'if (ok) /"/.test(s); /* "'"$tail"
+  run_file "ts division after ) is not a regex" fail 'src/a.ts,line=2' '' src/a.ts $'const h = (w) / 2; /*'"$tail"
+  run_file "ts regex after return" fail 'src/a.ts,line=3' '' src/a.ts $'function f(s) {\n  return /\'/.test(s); /*'"$tail"$'}\n'
+  run_file "tsx // in JSX text" fail 'src/a.tsx,line=2' '' src/a.tsx $'const a = <a>http://x {/*'"$tail"$'}</a>;\n'
+  run_file "tsx quotes in JSX text" fail 'src/a.tsx,line=2' '' src/a.tsx $'const a = <p>It\'s {/* Bob\'s'"$tail"$'}</p>;\n'
+  run_file "jsx JSX text after return" fail 'src/a.jsx,line=3' '' src/a.jsx $'function A() {\n  return <a title="x">http://x {/*'"$tail"$'}</a>;\n}\n'
+  run_file "tsx /* in JSX text is text" pass 'OK \(0 allowlisted\)' '' src/a.tsx $'const a = <p>/* not a comment</p>;\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  run_file "js /* in JSX text (over-reports)" fail 'src/a.js,line=2' '' src/a.js $'const a = <p>/* not a comment</p>;\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  run_file "tsx generic arrow is not JSX" fail 'src/a.tsx,line=2' '' src/a.tsx $'const f = <T,>(x: T) => x; /*'"$tail"
+  run_file "tsx generic function type is not JSX" fail 'src/a.tsx,line=2' '' src/a.tsx $'type F = <T>(x: T) => T; /*'"$tail"
+  run_file "tsx const generic arrow is not JSX" pass 'OK \(0 allowlisted\)' '' src/a.tsx $'const f = <const T,>(x: T) => "/*";\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  # Not valid code: a tag that cannot close leaves no reading.
+  run_file "tsx last reading lost does not end the scan" fail 'src/a.tsx,line=3' '' src/a.tsx $'const a = <b c;\n/*'"$tail"
+  run_file "ts regex after yield" fail 'src/a.ts,line=3' '' src/a.ts $'function* g() {\n  yield /\'/; /* \''"$tail"$'}\n'
+  run_file "js // in JSX text" fail 'src/a.js,line=2' '' src/a.js $'const a = <a>http://x {/*'"$tail"$'}</a>;\n'
+  run_file "ts division after ) keeps strings opaque" pass 'OK \(0 allowlisted\)' '' src/a.ts $'const h = (w) / 2; const a = "/*";\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
+  run_file "ts reserved word as a property" fail 'src/a.ts,line=2' '' src/a.ts $'const h = o.return / 2; /*'"$tail"
+  run_file "tf comment in a string substitution" fail 'main.tf,line=2' '' main.tf $'x = "${ /*'"$tail"$'1 }"\n'
+  run_file "tf quote in a comment in a substitution" fail 'main.tf,line=2' '' main.tf $'x = "${ 1 /* "'"$tail"$'}"\n'
+  run_file "tf // in heredoc text" fail 'main.tf,line=3' '' main.tf $'x = <<EOF\nsee // ${ /*'"$tail"$'1 }\nEOF\n'
+  run_file "tf heredoc text with /* and no marker" pass 'OK \(0 allowlisted\)' '' main.tf $'x = <<-EOF\n  src/*.tf\n  EOF\ny = "codex round 7 failed"\n'
+  run_file "scss // in an unquoted url" fail 'src/a.scss,line=2' '' src/a.scss $'.a { background: url(http://x/a.png); /*'"$tail"$'}\n'
+  run_file "scss // in a custom property" fail 'src/a.scss,line=2' '' src/a.scss $'.a { --u: http://x; /*'"$tail"$'}\n'
   run_file "ts allowlisted interior" pass 'OK \(1 allowlisted\)' 'src/a.ts:round 7 required this  # example reason' src/a.ts $'/*\n * Notes.\n'"$inner"$' */\nexport const x = 1;\n'
   run_file "ts delimiters in strings" pass 'OK \(0 allowlisted\)' '' src/a.ts $'const a = "/*";\nconst b = "codex round 7 failed";\nconst c = "*/";\n'
   run_file "html delimiter in string (over-reports)" fail 'page.html,line=2' '' page.html $'<p title="<!--">\n'"$inner"$'</p>\n'
@@ -237,16 +292,19 @@ exclude=(":(exclude)bin/check-review-comments.sh" ":(exclude)$ALLOW_FILE"
 # Exits 1 if a Python file does not parse: a file the check cannot read must
 # not pass as clean.
 #
-# String literals are skipped only where they cannot hold code: the C-style
-# scanner (TypeScript, JavaScript, CSS, Terraform) steps over '...' and "..."
-# but not over template literals, because a ${...} substitution can hold a
-# real comment, so template text is scanned like code. The delimiter scanners
-# for HTML, Jinja and Go templates do not know about strings either, so a
-# delimiter inside a string or template text there opens a comment. That fails
-# closed: it can only report more, never less. An unterminated block runs to
-# the end of the file for the same reason.
-PY_SCAN=$(cat <<'PY'
-import ast, re, subprocess, sys
+# The C-style scanner (TypeScript, JavaScript, CSS, SCSS, Terraform) skips
+# only text that cannot hold code: strings, template text, regex literals,
+# JSX text and line comments, but never a ${...} substitution, which is code.
+# Where it cannot tell which reading is right, it follows all of them, and
+# where it loses track it reports rather than skips; the header lists how.
+# The delimiter scanners for HTML, Jinja and Go templates do not know about
+# strings, so a delimiter inside a string there opens a comment. Both fail
+# closed: they can only report more, never less. An unterminated block runs
+# to the end of the file for the same reason.
+# read, not $(cat <<...): bash 3.2 matches quotes inside a heredoc that sits
+# in a command substitution, and the Python holds unpaired ones.
+IFS= read -r -d '' PY_SCAN <<'PY' || true
+import ast, bisect, heapq, re, subprocess, sys
 
 if sys.version_info < (3, 8):
     sys.exit("python 3.8 or newer is needed to read comment line ranges")
@@ -255,49 +313,297 @@ C = (re.compile(r"/\*"), "*/")
 HTML = (re.compile(r"<!--"), "-->")
 JINJA = (re.compile(r"\{#"), "#}")
 GOT = (re.compile(r"\{\{-?\s*/\*"), "*/")
-# Extensions whose block comments need string-aware scanning, with the line
-# comment leaders that can hide a "/*" from the scanner.
-CSCAN = {"ts": ("//",), "tsx": ("//",), "js": ("//",), "jsx": ("//",),
-         "cjs": ("//",), "mjs": ("//",), "css": (), "scss": ("//",),
-         "tf": ("#", "//"), "tfvars": ("#", "//")}
+# Languages whose block comments need a context-aware scanner. "leaders" are
+# the line comment leaders; "quotes" maps each string quote to the openers of
+# a substitution inside it, and "escapes" are the spellings of a literal
+# opener. "template", "regex" and "jsx" turn on JavaScript template literals,
+# regex literals and JSX. "heredoc" turns on Terraform <<EOF strings.
+# "open_line" stops a line comment from hiding a "/*": in SCSS, // is not a
+# comment inside url(...) or a custom property value, and the scanner does
+# not model either.
+JS = {"leaders": ("//",), "quotes": {"'": (), '"': ()},
+      "template": True, "regex": True}
+# "jsx": "sure" where an operand position can only start JSX with "<",
+# "maybe" where Flow generics look the same.
+JSX = dict(JS, jsx="maybe")
+TSX = dict(JS, jsx="sure")
+CSS = {"leaders": (), "quotes": {"'": (), '"': ()}}
+SCSS = {"leaders": ("//",), "quotes": {"'": ("#{",), '"': ("#{",)},
+        "open_line": True}
+HCL = {"leaders": ("#", "//"), "quotes": {'"': ("${", "%{")},
+       "escapes": ("$${", "%%{"), "heredoc": True}
+# .ts cannot hold JSX; .js, .cjs and .mjs often do.
+CSCAN = {"ts": JS, "tsx": TSX, "js": JSX, "jsx": TSX, "cjs": JSX, "mjs": JSX,
+         "css": CSS, "scss": SCSS, "tf": HCL, "tfvars": HCL}
 DELIM = {"html": [HTML, JINJA, C], "htm": [HTML, JINJA, C],
          "svg": [HTML, C], "vue": [HTML, C], "xml": [HTML], "bpmn": [HTML],
          "j2": [JINJA, HTML], "jinja": [JINJA, HTML], "jinja2": [JINJA, HTML],
          "tpl": [GOT], "tftpl": [GOT], "yaml": [GOT], "yml": [GOT]}
 
+# Words after which an operand follows, so a "/" starts a regex and a "<"
+# starts JSX. A reserved word is a property name after ".", and the
+# contextual ones can also name a variable, so after those the scanner
+# follows both readings.
+RESERVED = frozenset("return typeof instanceof in new delete void throw "
+                     "case do else".split())
+CONTEXTUAL = frozenset("of yield await".split())
+WORD = re.compile(r"[\w$#]+")
+SPACE = re.compile(r"\s+")
+FLAGS = re.compile(r"[\w$]*")
+JSX_START = re.compile(r"[\s\w$>]")
+# In .tsx, <T,> and <T = U> can only open type parameters, while <T>(...)
+# and <T extends U> can open type parameters or JSX.
+TYPE_PARAMS = re.compile(r"\s*(?:const\s+)?[\w$]+\s*[,=]")
+TYPE_OR_JSX = re.compile(r"\s*(?:const\s+)?[\w$]+\s*(?:extends\b|>\s*\()")
+HEREDOC = re.compile(r"<<-?([A-Za-z_][\w-]*)[ \t]*\n")
+TEMPLATE_STOP = re.compile(r"[\\`$]")
+JSX_TEXT_STOP = re.compile(r"[{<]")
+# More live readings than this and the rest of the file skips nothing.
+MAX_READINGS = 64
 
-def c_spans(text, leaders):
-    spans, i, n, line = [], 0, len(text), 1
-    while i < n:
+
+def c_spans(text, lang):
+    """Return (first, last) line pairs of the block comments in text.
+
+    A reading is the scanner's position plus a context stack: code (with its
+    brace depth), string, template text, heredoc or JSX. Where the token
+    before a "/" or "<" cannot tell an operator from a regex or JSX start,
+    both readings go forward and a comment either one finds is kept. A
+    reading that breaks the syntax (a regex or JSX tag that cannot close)
+    stops; readings that reach the same state merge.
+    """
+    n = len(text)
+    starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    spans = set()
+    leaders = lang["leaders"]
+    quotes = lang["quotes"]
+    escapes = lang.get("escapes", ())
+    string_stop = {q: re.compile("[\\\\\n" + re.escape(q + "".join(
+        o[0] for o in opens + escapes)) + "]") for q, opens in quotes.items()}
+
+    def line_of(pos):
+        return bisect.bisect_right(starts, pos)
+
+    def block(i):
+        j = text.find("*/", i + 2)
+        end = n if j < 0 else j + 2
+        spans.add((line_of(i), line_of(max(end - 1, i))))
+        return end
+
+    def regex_end(i):
+        # A regex literal cannot hold a raw newline; None means i does not
+        # start one.
+        j, in_class = i + 1, False
+        while j < n:
+            c = text[j]
+            if c == "\n":
+                return None
+            if c == "\\":
+                if j + 1 < n and text[j + 1] == "\n":
+                    return None
+                j += 2
+                continue
+            if in_class:
+                in_class = c != "]"
+            elif c == "[":
+                in_class = True
+            elif c == "/":
+                return FLAGS.match(text, j + 1).end()
+            j += 1
+        return None
+
+    def code(i, stack, prev):
+        # prev classes the token before i: "R" means an operand may follow
+        # (so "/" starts a regex), "D" means an operator must, "B" either.
+        ch, top = text[i], stack[-1]
+        if ch.isspace():
+            return [(SPACE.match(text, i).end(), stack, prev)]
+        if text.startswith("/*", i):
+            return [(block(i), stack, prev)]
+        for m in leaders:
+            if text.startswith(m, i):
+                j = text.find("\n", i)
+                j = n if j < 0 else j
+                if lang.get("open_line"):
+                    k = text.find("/*", i + len(m), j)
+                    j = j if k < 0 else k
+                return [(j, stack, prev)]
+        if ch in quotes:
+            return [(i + 1, stack + (("s", ch, i),), prev)]
+        if ch == "`" and lang.get("template"):
+            return [(i + 1, stack + (("t",),), prev)]
+        if ch == "<" and lang.get("heredoc"):
+            m = HEREDOC.match(text, i)
+            if m:
+                return [(m.end(), stack + (("h", m.group(1)),), prev)]
+        if ch == "{":
+            return [(i + 1, stack[:-1] + (("c", top[1] + 1),), "R")]
+        if ch == "}":
+            if top[1] > 0:
+                return [(i + 1, stack[:-1] + (("c", top[1] - 1),), "B")]
+            # Closes a substitution or JSX expression; at the top level it
+            # is unbalanced and ignored.
+            return [(i + 1, stack[:-1] if len(stack) > 1 else stack, "B")]
+        m = WORD.match(text, i)
+        if m:
+            w = m.group()
+            if w in RESERVED:
+                after_dot = text[:i].rstrip().endswith(".")
+                return [(m.end(), stack, "D" if after_dot else "R")]
+            return [(m.end(), stack, "B" if w in CONTEXTUAL else "D")]
+        if lang.get("regex") and ch == "/":
+            out = []
+            if prev in "RB":
+                end = regex_end(i)
+                if end is not None:
+                    out.append((end, stack, "D"))
+            if prev in "DB" or not out:
+                out.append((i + 1, stack, "R"))
+            return out
+        if (ch == "<" and lang.get("jsx") and prev in "RB"
+                and JSX_START.match(text, i + 1)):
+            jsx_open = (i + 1, stack + (("jo", 0),), prev)
+            if (lang["jsx"] == "sure" and prev == "R"
+                    and not TYPE_OR_JSX.match(text, i + 1)):
+                if TYPE_PARAMS.match(text, i + 1):
+                    return [(i + 1, stack, "R")]
+                return [jsx_open]
+            return [jsx_open, (i + 1, stack, "R")]
+        if ch == ")" or text.startswith(("++", "--"), i):
+            return [(i + (1 if ch == ")" else 2), stack, "B")]
+        if ch == "]":
+            return [(i + 1, stack, "D")]
+        if ch == "!" and not text.startswith("!=", i):
+            # Logical not, or the TypeScript non-null assertion x!.
+            return [(i + 1, stack, "B")]
+        return [(i + 1, stack, "R")]
+
+    def string(i, stack, prev):
+        _, q, start = stack[-1]
         ch = text[i]
+        if ch == "\\":
+            return [(i + 2, stack, prev)]
+        if ch == q:
+            return [(i + 1, stack[:-1], "D")]
         if ch == "\n":
-            line += 1
-            i += 1
-        elif text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            end = n if j < 0 else j + 2
-            first = line
-            line += text.count("\n", i, end)
-            spans.append((first, line))
-            i = end
-        elif any(text.startswith(m, i) for m in leaders):
+            # Valid code cannot leave a string open at a raw newline, so the
+            # scanner has lost track. Rescan from after the quote as code, so
+            # the misread string cannot hide a "/*" on this line.
+            return [(start + 1, stack[:-1], "B")]
+        for e in escapes:
+            if text.startswith(e, i):
+                return [(i + len(e), stack, prev)]
+        for o in quotes[q]:
+            if text.startswith(o, i):
+                return [(i + len(o), stack + (("c", 0),), "R")]
+        m = string_stop[q].search(text, i + 1)
+        return [(m.start() if m else n, stack, prev)]
+
+    def template(i, stack, prev):
+        ch = text[i]
+        if ch == "\\":
+            return [(i + 2, stack, prev)]
+        if ch == "`":
+            return [(i + 1, stack[:-1], "D")]
+        if text.startswith("${", i):
+            return [(i + 2, stack + (("c", 0),), "R")]
+        m = TEMPLATE_STOP.search(text, i + 1)
+        return [(m.start() if m else n, stack, prev)]
+
+    def heredoc(i, stack, prev):
+        ident = stack[-1][1]
+        if i == 0 or text[i - 1] == "\n":
+            m = re.compile(r"[ \t]*" + re.escape(ident) + r"[ \t]*(?=\n|$)").match(text, i)
+            if m:
+                return [(m.end(), stack[:-1], "D")]
+        for e in escapes:
+            if text.startswith(e, i):
+                return [(i + len(e), stack, prev)]
+        if text.startswith(("${", "%{"), i):
+            return [(i + 2, stack + (("c", 0),), "R")]
+        return [(i + 1, stack, prev)]
+
+    def jsx(i, stack, prev):
+        kind, depth = stack[-1]
+        ch = text[i]
+        if kind == "jx":
+            # Element children: text, {expression}, or a nested tag.
+            if ch == "{":
+                return [(i + 1, stack + (("c", 0),), "R")]
+            if ch == "<":
+                if text.startswith("</", i):
+                    return [(i + 2, stack[:-1] + (("jc", depth),), prev)]
+                return [(i + 1, stack[:-1] + (("jo", depth),), prev)]
+            m = JSX_TEXT_STOP.search(text, i + 1)
+            return [(m.start() if m else n, stack, prev)]
+        # Inside an opening ("jo") or closing ("jc") tag.
+        if ch.isspace() or ch.isalnum() or ch in "_$.:-=":
+            return [(i + 1, stack, prev)]
+        if text.startswith("/*", i):
+            return [(block(i), stack, prev)]
+        if text.startswith("//", i):
             j = text.find("\n", i)
-            i = n if j < 0 else j
-        elif ch in "'\"":
-            # Plain strings cannot hold code. Template literals (backticks)
-            # are not skipped: a ${...} substitution can hold a real comment.
-            i += 1
-            while i < n and text[i] != ch and text[i] != "\n":
-                if text[i] == "\\" and i + 1 < n:
-                    if text[i + 1] == "\n":
-                        line += 1
-                    i += 1
-                i += 1
-            if i < n and text[i] == ch:
-                i += 1
+            return [(n if j < 0 else j, stack, prev)]
+        if ch == ">":
+            if kind == "jo":
+                return [(i + 1, stack[:-1] + (("jx", depth + 1),), prev)]
+            if depth <= 1:
+                return [(i + 1, stack[:-1], "D")]
+            return [(i + 1, stack[:-1] + (("jx", depth - 1),), prev)]
+        if kind == "jo":
+            if ch in "\"'":
+                j = text.find(ch, i + 1)
+                return [] if j < 0 else [(j + 1, stack, prev)]
+            if ch == "{":
+                return [(i + 1, stack + (("c", 0),), "R")]
+            if text.startswith("/>", i):
+                if depth == 0:
+                    return [(i + 2, stack[:-1], "D")]
+                return [(i + 2, stack[:-1] + (("jx", depth),), prev)]
+        # Not a JSX tag, so this reading is wrong.
+        return []
+
+    steps = {"c": code, "s": string, "t": template, "h": heredoc,
+             "jo": jsx, "jc": jsx, "jx": jsx}
+    start = (0, (("c", 0),))
+    live, heap = {start: "R"}, [start]
+
+    def add(pos, stack, prev):
+        key = (pos, stack)
+        if key in live:
+            if live[key] != prev:
+                live[key] = "B"
         else:
-            i += 1
-    return spans
+            live[key] = prev
+            heapq.heappush(heap, key)
+
+    def skip_nothing(i):
+        while True:
+            i = text.find("/*", i)
+            if i < 0:
+                return
+            i = block(i)
+
+    while heap:
+        if len(heap) > MAX_READINGS:
+            # Too many readings to follow.
+            skip_nothing(heap[0][0])
+            break
+        pos, stack = heapq.heappop(heap)
+        prev = live.pop((pos, stack))
+        while pos < n:
+            nxt = steps[stack[-1][0]](pos, stack, prev)
+            if not nxt and not heap:
+                # The last reading broke the syntax, so the scanner has
+                # lost track of the file.
+                skip_nothing(pos)
+            if len(nxt) == 1 and not heap:
+                pos, stack, prev = nxt[0]
+                continue
+            for s in nxt:
+                add(*s)
+            break
+    return sorted(spans)
 
 
 def delim_spans(text, syntaxes):
@@ -367,7 +673,6 @@ for raw in sys.stdin.buffer.read().split(b"\0"):
                       + lines[n - 1].encode("utf-8", "replace") + b"\n")
 sys.exit(status)
 PY
-)
 
 # scan_files: NUL-separated tracked paths in scope whose extension has a
 # comment syntax beyond per-line leaders. Same excludes as above.
