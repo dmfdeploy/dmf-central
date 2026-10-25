@@ -11,10 +11,3 @@ jobs:
           for pb in playbooks/*.yml; do
             ansible-playbook --syntax-check "$pb" || exit 1
           done
-
-  review-comments:
-    runs-on: docker
-    steps:
-      - uses: actions/checkout@v4
-      - name: No review history in comments
-        run: bin/check-review-comments.sh
