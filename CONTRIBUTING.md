@@ -111,8 +111,11 @@ sign-offs. Both run in CI only. The `automerge` workflow doesn't check
 anything. It turns on auto-merge for the PR.
 
 No check needs a live cluster, cloud credentials, or an image build. A local run
-covers the `ansible` and `review-comments` jobs. It doesn't cover
-`working-model`, the `guard` checks or the sign-off check.
+covers the `review-comments` job and the lint and syntax steps of the `ansible`
+job. It leaves out the `helm lint` step, which has nothing to lint until a
+`charts/` directory exists. If you add a chart, run `helm lint` on its directory
+too. A local run also doesn't cover `working-model`, the `guard` checks, or the
+sign-off check.
 
 ### Install the hooks
 
