@@ -16,12 +16,9 @@ scope is in its `docs/architecture/dmfdeploy-platform-plan.md` §7b, §7c and §
 
 ## Build and test
 
-CI (`.github/workflows/ci.yml`) runs these from the repo root:
-```bash
-ansible-galaxy collection install -r requirements.yml
-yamllint . && ansible-lint . -p
-for pb in playbooks/*.yml; do ansible-playbook "$pb" --syntax-check; done
-```
+Setup, the checks, the hooks and the pull request gates are in
+[CONTRIBUTING.md](CONTRIBUTING.md#develop-and-test). That section is the one
+copy of the commands.
 
 ## Rules that are easy to miss
 
