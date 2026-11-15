@@ -33,4 +33,4 @@ Third-party components are listed in [NOTICE](NOTICE).
 
 ## For contributors
 
-`AGENTS.md`, `CLAUDE.md` and `QWEN.md` hold instructions for AI coding agents that help maintain this repository. For the human workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
+`AGENTS.md`, `CLAUDE.md` and `QWEN.md` hold instructions for AI coding agents that help maintain this repository. For setup, the checks, the git hooks and what a pull request needs, see [CONTRIBUTING.md](CONTRIBUTING.md).

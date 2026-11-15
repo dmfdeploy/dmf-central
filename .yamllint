@@ -6,6 +6,7 @@ extends: relaxed
 ignore: |
   **/templates/**
   **/charts/**/templates/**
+  .venv/
 rules:
   line-length: disable
   comments: disable
