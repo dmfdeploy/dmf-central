@@ -32,26 +32,18 @@ jobs:
       - name: ansible syntax-check
         run: |
           shopt -s nullglob
-          for pb in playbooks/*.yml; do
+          playbooks=(playbooks/*.yml)
+          [ ${#playbooks[@]} -gt 0 ] || { echo "No playbooks found"; exit 1; }
+          for pb in "${playbooks[@]}"; do
             echo "=== syntax-check: $pb ==="
             ansible-playbook "$pb" --syntax-check
           done
-      - name: helm-lint charts/
+
+      - name: No chart goes unchecked
+        # The repository has no charts, so there is no chart lint step. Add one
+        # when the first chart lands; this fails until then.
         run: |
-          set -eu
-          shopt -s nullglob
-          chart_dirs=()
-          while IFS= read -r -d '' chart_yaml; do
-            chart_dirs+=("$(dirname "$chart_yaml")")
-          done < <(find charts -name 'Chart.yaml' -print0 2>/dev/null)
-          if [ ${#chart_dirs[@]} -eq 0 ]; then
-            echo "SKIP: no charts found"
-            exit 0
-          fi
-          for chart_dir in "${chart_dirs[@]}"; do
-            echo "=== helm-lint: $chart_dir ==="
-            helm lint "$chart_dir"
-          done
+          [ ! -d charts ] || { echo "charts/ exists but no step lints it"; exit 1; }
 
   review-comments:
     # Comments state why, not which review prompted them
