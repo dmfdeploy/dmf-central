@@ -173,10 +173,9 @@ CI checks each of these.
   points at this repo. If your change has no issue, such as a typo fix, a
   maintainer can add the `no-issue` label. Only maintainers can add labels, so
   if you open the pull request from a fork, ask in the PR. The check runs when
-  you open the pull request, push a commit, reopen it, or edit the PR body
-  (the `on:` trigger list in `guard.yml`). Adding a label doesn't run it, so
-  after a maintainer adds `no-issue`, edit the PR body or push a commit to run
-  the check again.
+  you open the pull request, push a commit, reopen it, edit the PR body, or add
+  or remove a label (the `on:` trigger list in `issue-link.yml`). After a
+  maintainer adds `no-issue`, nothing more is needed.
 - **A DCO sign-off on every commit.** Use `git commit -s`. See the next section.
 - **Conventional commit subjects.** Use `type(scope): summary`, with one
   optional scope. The scope may use only `a-z`, `0-9`, `.`, `_` and `-`. The
