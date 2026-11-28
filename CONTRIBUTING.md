@@ -8,7 +8,7 @@ single source of truth: all changes land via **Pull Request** against `main`.
 ## Quick start
 
 1. Read the platform overview in the [dmfdeploy/dmfdeploy](https://github.com/dmfdeploy/dmfdeploy#readme)
-   umbrella README (its purpose block and diagram of the parts) and apply any
+   umbrella README (its purpose section and component table) and apply any
    relevant ADRs from `docs/decisions/INDEX.md`.
 2. Set up your machine and run the checks (see [Develop and test](#develop-and-test)).
 3. Fork or branch, make your change on a topic branch, open a PR against `main`.
