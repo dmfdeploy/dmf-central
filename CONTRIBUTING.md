@@ -107,8 +107,8 @@ The `ci` workflow in `.github/workflows/ci.yml` has these jobs:
   umbrella repo, so it runs in CI only.
 
 The `guard` workflow scans for secrets and vulnerabilities, lints the workflow
-files, and checks commit subjects and the issue link. The `DCO` workflow checks
-sign-offs. Both run in CI only. The `automerge` workflow doesn't check
+files, and checks commit subjects. The `issue-link` workflow checks the issue
+link in the PR body. The `DCO` workflow checks sign-offs. All three run in CI only. The `automerge` workflow doesn't check
 anything. It turns on auto-merge for the PR.
 
 No check needs a live cluster, cloud credentials, or an image build. A local run
@@ -188,8 +188,9 @@ CI checks each of these.
   vulnerability scans.
 
 Also leave agent session links out of commit messages and the PR body. The
-`guard` workflow rejects one known session-link format. It can't recognize
-every tool's links, so reviewers look for them too.
+`guard` workflow rejects one known session-link format in commit messages, and the
+`issue-link` workflow rejects it in the PR body. They can't recognize every
+tool's links, so reviewers look for them too.
 
 ## Developer Certificate of Origin (DCO)
 
