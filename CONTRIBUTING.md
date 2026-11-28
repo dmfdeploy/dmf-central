@@ -31,9 +31,10 @@ whether a service would deploy, because none does yet.
 
 ### Prerequisites
 
-- **Python 3 with `venv` and `pip`.** CI runs the `python3` that comes with
-  Ubuntu 24.04 (the `runs-on` setting in `ci.yml`). The repository doesn't
-  pin a version. `pip` installs the newest Ansible release that your Python supports.
+- **Python 3 with `venv` and `pip`.** CI runs Python 3.13 on Ubuntu 24.04
+  (the `python-version` and `runs-on` settings in `ci.yml`). Use 3.13 to match
+  it. `requirements-ci.txt` pins the versions of `ansible`, `ansible-lint`,
+  `yamllint` and `pip`.
 - **Network access to Ansible Galaxy**, to install the collections.
 - **Optional tools.** [gitleaks](https://github.com/gitleaks/gitleaks) powers
   the commit hook.
@@ -48,11 +49,11 @@ Run these commands from the repository root:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install ansible ansible-lint yamllint
+python -m pip install -r requirements-ci.txt
 ansible-galaxy collection install -r requirements.yml
 ```
 
-CI installs the same packages. `ansible-galaxy` installs the collections
+CI installs the same pinned packages from `requirements-ci.txt`. `ansible-galaxy` installs the collections
 into `~/.ansible/collections`, outside the virtual environment, where other
 projects can see them. It reports that there is nothing to do when the
 `ansible` package or an earlier run already provides them.
@@ -96,9 +97,9 @@ The `ci` workflow in `.github/workflows/ci.yml` has these jobs:
 
 - **`ansible`** installs `ansible`, `ansible-lint` and `yamllint`, then runs
   the `yamllint`, `ansible-lint` and syntax-check commands from the previous
-  section. It also has a `helm lint`
-  step for a `charts/` directory. That directory doesn't exist, so the step
-  prints `SKIP: no charts found` and passes.
+  section. Its last step is named `No chart goes unchecked`. It fails if a
+  `charts/` directory exists, because no step lints charts yet. The repository has no
+  `charts/` directory, so the step passes.
 - **`review-comments`** runs `bin/check-review-comments.sh` and its
   `--self-test`.
 - **`working-model`** confirms that the working-model block in `AGENTS.md`,
@@ -112,9 +113,8 @@ anything. It turns on auto-merge for the PR.
 
 No check needs a live cluster, cloud credentials, or an image build. A local run
 covers the `review-comments` job and the lint and syntax steps of the `ansible`
-job. It leaves out the `helm lint` step, which has nothing to lint until a
-`charts/` directory exists. If you add a chart, run `helm lint` on its directory
-too. A local run also doesn't cover `working-model`, the `guard` checks, or the
+job. It leaves out the `No chart goes unchecked` step. If you add a `charts/`
+directory, that step fails until you add a step that lints the charts. A local run also doesn't cover `working-model`, the `guard` checks, or the
 sign-off check.
 
 ### Install the hooks
